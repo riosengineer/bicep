@@ -1,0 +1,26 @@
+configuration:
+  # Enable automatic expansion of bicep source files.
+  AZURE_BICEP_FILE_EXPANSION: true
+  # Enable automatic expansion of param files
+  AZURE_PARAMETER_FILE_EXPANSION: true
+execution:
+  # Ignore warnings for resources and objects that don't have any rules.
+  notProcessedWarning: false
+input:
+  pathIgnore:
+    # Ignore common files that don't need analysis.
+    - "**/bicepconfig.json"
+    - "*.tf"
+    - "*.yaml"
+    - "*.yml"
+    - "*.md"
+    - "*.ps1"
+
+    # Exclude Bicep module files.
+    # - "modules/**/*.bicep"
+
+    # Exclude JSON module files.
+    - "modules/**/*.json"
+
+    # Include bicep files from modules.
+    - "!modules/**/*.bicep"
