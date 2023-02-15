@@ -1,0 +1,52 @@
+trigger: none
+
+name: $(SourceBranchName)_$(date:yyyyMMdd)$(rev:.r)
+
+pool:
+  name: Azure Pipelines
+steps:
+- task: AzureCLI@2
+  displayName: 'Bicep Validate'
+  inputs:
+    azureSubscription: ''
+    scriptType: pscore
+    scriptLocation: inlineScript
+    inlineScript: |
+     $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\*.bicep"
+     
+     $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\main.parameters.json"
+     
+     foreach ($bicepfile in $bicepfiles) {
+     
+     az deployment sub validate --location UKSouth --template-file $bicepfile --parameters $params 
+     
+     Write-Host $biceparams
+     }
+    workingDirectory: bicep/deploy
+
+- task: AzureCLI@2
+  displayName: 'Bicep What-If'
+  inputs:
+    azureSubscription: 'Visual Studio Enterprise Subscription – MPN (b6d513e3-3797-4e3b-b884-ce1e73d7c892)'
+    scriptType: pscore
+    scriptLocation: inlineScript
+    inlineScript: |
+     $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\*.bicep"
+     
+     $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\main.parameters.json"
+     
+     foreach ($bicepfile in $bicepfiles) {
+     
+     Write-Host $bicepfile found. Running What-If 
+     
+     az deployment sub what-if --location UKSouth --template-file $bicepfile --parameters $params
+     
+     }
+
+- task: bewhite.ps-rule.assert.ps-rule-assert@2
+  displayName: 'Run PSRule analysis'
+  inputs:
+    source: '$(System.DefaultWorkingDirectory)/ps-rule.yaml'
+    modules: PSRule.Rules.Azure
+    outputFormat: NUnit3
+    outputPath: 'reports/ps-rule-results.xml'
