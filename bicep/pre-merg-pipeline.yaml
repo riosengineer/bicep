@@ -1,3 +1,7 @@
+trigger: none
+
+name: $(SourceBranchName)_$(date:yyyyMMdd)$(rev:.r)
+
 pool:
   name: Azure Pipelines
 steps:
