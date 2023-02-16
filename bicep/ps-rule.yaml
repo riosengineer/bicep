@@ -1,6 +1,6 @@
 configuration:
   # Enable automatic expansion of bicep source files.
-  AZURE_BICEP_FILE_EXPANSION: true
+# AZURE_BICEP_FILE_EXPANSION: true
   # Enable automatic expansion of param files
   AZURE_PARAMETER_FILE_EXPANSION: true
 execution:
@@ -17,10 +17,14 @@ input:
     - "*.ps1"
 
     # Exclude Bicep module files.
-    # - "modules/**/*.bicep"
+    - "modules/**/*.bicep"
 
     # Exclude JSON module files.
     - "modules/**/*.json"
 
     # Include bicep files from modules.
-    - "!modules/**/*.bicep"
+    # "!modules/**/*.bicep"
+rule:
+  exclude:
+  # Ignore the following rules for all objects
+  - Azure.SQL.DefenderCloud
