@@ -1,47 +1,39 @@
-trigger: none
-
-name: $(SourceBranchName)_$(date:yyyyMMdd)$(rev:.r)
-
 pool:
   name: Azure Pipelines
 steps:
 - task: AzureCLI@2
-  displayName: 'Bicep Validate'
+  displayName: 'Bicep Linter'
   inputs:
-    azureSubscription: ''
+    azureSubscription: '$subscription'
     scriptType: pscore
     scriptLocation: inlineScript
     inlineScript: |
-     $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\*.bicep"
+     # Get main.bicep file 
+     $mainbicep = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\main.bicep"
      
-     $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\main.parameters.json"
+     # Run Bicep Build Linter on main.bicep
+     az bicep build -f $mainbicep
      
-     foreach ($bicepfile in $bicepfiles) {
-     
-     az deployment sub validate --location UKSouth --template-file $bicepfile --parameters $params 
-     
-     Write-Host $biceparams
-     }
+     # Log output
+     Write-Host Bicep Linter ran on $mainbicep
     workingDirectory: bicep/deploy
 
 - task: AzureCLI@2
-  displayName: 'Bicep What-If'
+  displayName: 'Azure CLI '
   inputs:
     azureSubscription: 'Visual Studio Enterprise Subscription – MPN (b6d513e3-3797-4e3b-b884-ce1e73d7c892)'
     scriptType: pscore
     scriptLocation: inlineScript
     inlineScript: |
-     $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\*.bicep"
+     # Get main.bicep & parameters JSON file
+     $main = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\main.bicep"
+     $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\main.parameters.json"
      
-     $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*\main.parameters.json"
+     # Log output on file found for validation
+     Write-Host Az Deployment Validate on $main $params
      
-     foreach ($bicepfile in $bicepfiles) {
-     
-     Write-Host $bicepfile found. Running What-If 
-     
-     az deployment sub what-if --location UKSouth --template-file $bicepfile --parameters $params
-     
-     }
+     # Run Subscription scope validation 
+     az deployment sub validate --location uksouth--template-file $main --parameters $params
 
 - task: bewhite.ps-rule.assert.ps-rule-assert@2
   displayName: 'Run PSRule analysis'
@@ -50,3 +42,4 @@ steps:
     modules: PSRule.Rules.Azure
     outputFormat: NUnit3
     outputPath: 'reports/ps-rule-results.xml'
+
