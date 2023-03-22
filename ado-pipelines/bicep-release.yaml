@@ -1,0 +1,93 @@
+# Trigger
+trigger:
+  batch: true
+  branches:
+    include: 
+    - main
+  paths: 
+    include: 
+      - Bicep/
+    exclude: 
+      - Bicep/modules/*/.tests/*
+      - Bicep/modules/*
+
+variables:
+  vmImageName: ubuntu-latest
+  azureSubscription: "svc-connection-here" 
+
+stages:
+  - stage: Build
+    jobs:
+    - job: 'build'
+      steps:
+      - task: ArchiveFiles@2
+        displayName: "Archive Bicep Plan"
+        inputs:
+          includeRootFolder: false
+          replaceExistingArchive: true
+          rootFolderOrFile: $(Build.SourcesDirectory)
+          archiveType: tar
+          archiveFile: "$(Build.ArtifactStagingDirectory)/$(Build.BuildId).tgz"
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish Artifact'
+        inputs:
+          targetPath: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).tgz'
+          artifactName: bicep
+
+
+  - stage: Whatif
+    variables:
+    - group: keyvault-lib-name-here
+    - group: subscriptions
+    jobs: 
+    - job: 'whatif'
+      steps:
+      - task: PowerShell@2
+        displayName: 'Az Login & What If'
+        inputs:
+          targetType: 'inline'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/Bicep/'
+          script: |
+            az login --service-principal --username $(kv-value) --password $(kv-secret) --tenant $(tenant)
+            az account set --subscription $(Sub Lab)
+            az deployment sub what-if --location 'uksouth' --template-file main.bicep
+
+  - stage: DeployCore
+    dependsOn: Whatif
+    variables:
+    - group: keyvault-lib-name-here
+    - group: subscriptions
+    jobs:
+    - deployment: prod
+      environment: 'production'
+      displayName: 'Deploy to Core Subscription'
+      pool: 
+        vmImage: $(vmImageName)
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: ExtractFiles@1
+                displayName: 'Extract files'
+                inputs:
+                  archiveFilePatterns: '$(Agent.BuildDirectory)/bicep/$(Build.BuildId).tgz'
+                  destinationFolder: '$(System.DefaultWorkingDirectory)/'
+                  cleanDestinationFolder: false
+                  
+              - task: PowerShell@2
+                displayName: 'Az SPN Login & Subscription Set to Core'
+                inputs:
+                  targetType: 'inline'
+                  workingDirectory: $(System.DefaultWorkingDirectory)/Bicep/
+                  script: |
+                      az login --service-principal --username $(kv-value) --password $(secret) --tenant $(tenant)
+                      az account set --subscription $(Sub Lab)
+
+              - task: PowerShell@2
+                displayName: 'Deploy to Core Subscription'
+                inputs:
+                  targetType: 'inline'
+                  workingDirectory: $(System.DefaultWorkingDirectory)/Bicep/
+                  script: |
+                      az deployment sub create --location 'uksouth' --template-file main.bicep
