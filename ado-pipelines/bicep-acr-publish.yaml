@@ -1,0 +1,83 @@
+trigger:
+  branches:
+    include: 
+    - main
+  paths: 
+    include: 
+      - Bicep/modules/*
+    exclude: 
+      - Bicep/modules/*/.tests/*
+
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
+variables:
+  serviceConnectionName: 'svc-connection-name'
+
+stages:
+  - stage: Build
+    jobs:
+    - job:
+      steps:
+      - checkout: self
+      - task: PowerShell@2
+        displayName: 'Get changed or added files'
+        inputs:
+          targetType: filePath
+          filePath: .scripts/bicep-module-diff.ps1
+          pwsh: true
+          
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish files as artifact'
+        condition: and(succeeded(), eq(variables.bicepFiles, 'true'))
+        inputs: 
+          artifact: 'bicep'
+          targetPath: '$(Build.ArtifactStagingDirectory)'
+          publishLocation: pipeline
+
+      - task: AzureCLI@2
+        displayName: 'Validate bicep modules'
+        inputs:
+          azureSubscription: $(serviceConnectionName)
+          addSpnToEnvironment: true
+          scriptLocation: scriptPath
+          ScriptType: 'pscore'
+          scriptPath: .scripts/bicep-validate.ps1 
+
+#  - stage: Test
+#    jobs:
+#    - job:
+#      steps:
+#      - checkout: self
+#      - task: AzureCLI@2
+#        displayName: 'Run What-If on test modules'
+#        condition: and(succeeded(), eq(variables.biceptstModuleFiles, 'true'))
+#        inputs:
+#          azureSubscription: $(serviceConnectionName)
+#          addSpnToEnvironment: true
+#          scriptLocation: scriptPath
+#          ScriptType: 'pscore'
+#          scriptPath: .scripts/bicep-whatif-module.ps1 
+
+  - stage: Deploy
+    jobs:
+    - deployment: Deploy
+      environment: 'brmodules'
+      displayName: 'Deploy bicep files to registry'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+              - task: DownloadBuildArtifacts@1
+                inputs:
+                  artifactName: 'bicep'
+                  allowPartiallySucceededBuilds: false
+              - task: AzureCLI@2
+                displayName: 'Deploy bicep files to ACR'
+                inputs:
+                  azureSubscription: $(serviceConnectionName)
+                  addSpnToEnvironment: true
+                  scriptLocation: scriptPath
+                  ScriptType: 'pscore'
+                  scriptPath: .scripts/bicep-acr-publish.ps1
