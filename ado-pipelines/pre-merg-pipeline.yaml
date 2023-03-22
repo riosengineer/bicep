@@ -1,0 +1,60 @@
+trigger: none
+name: $(SourceBranchName)_$(date:yyyyMMdd)$(rev:.r)
+
+variables:
+  vmImageName: "ubuntu-latest"
+  azureSubscription: "service-connection-here" 
+
+jobs:
+  - job: BicepValidation
+    displayName: "Bicep Validation"
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: AzureCLI@2
+      displayName: Bicep Validation 
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*.bicep"
+
+          $params = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\main.parameters.json"
+
+          foreach ($bicepfile in $bicepfiles) {
+
+          az deployment sub validate --location UKSouth --template-file $bicepfile 
+
+          # Write-Host $biceparams
+          }
+    - task: AzureCLI@2
+      displayName: Bicep Linter
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*\*.bicep"
+
+          foreach ($bicepfile in $bicepfiles) {
+
+          az bicep build -f $bicepfile
+
+          # Write-Host $biceparams
+          }
+
+
+  - job: 'PSRuleAnalysis'
+    displayName: "Run PSRule analysis"
+    dependsOn: BicepValidation
+    pool:
+      vmImage: $(vmImageName)  
+    steps:   
+    - task: bewhite.ps-rule.assert.ps-rule-assert@2
+      inputs:
+        source: "$(System.DefaultWorkingDirectory)/ps-rule.yaml"
+        modules: PSRule.Rules.Azure, PSRule.Rules.CAF, PSRule.Rules.Kubernetes
+        outputFormat: NUnit3
+        outputPath: "reports/ps-rule-results.xml"
+ 
