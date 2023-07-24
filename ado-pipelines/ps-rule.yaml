@@ -1,19 +1,29 @@
+#
+# PSRule for Azure configuration
+#
+# Please see the documentation for all configuration options:
+# https://aka.ms/ps-rule-azure
+# https://aka.ms/ps-rule-azure/options
+# https://aka.ms/ps-rule/options
+# https://aka.ms/ps-rule-azure/bicep
+
 configuration:
   # Enable automatic expansion of bicep source files.
     AZURE_BICEP_FILE_EXPANSION: true
   # Enable automatic expansion of param files
     AZURE_PARAMETER_FILE_EXPANSION: true
+  # Set timeout for expanding Bicep source files.
+    AZURE_BICEP_FILE_EXPANSION_TIMEOUT: 15
 
 execution:
   # Ignore warnings for resources and objects that don't have any rules.
-  notProcessedWarning: false
-
+  unprocessedObject: Ignore
+  
 input:
   pathIgnore:
     # Ignore common files that don't need analysis.
     - "**/bicepconfig.json"
     - "*.yaml"
-    - "*.yml"
     - "*.md"
     - "*.ps1"
 
