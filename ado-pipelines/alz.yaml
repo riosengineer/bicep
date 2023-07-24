@@ -1,0 +1,492 @@
+# Bicep ALZ Release Pipeline
+# Author: Dan Rios
+trigger: none
+
+variables:
+- group: alz
+- name: azureServiceConnection
+  value: 'spn-azdo-bicep-mgmt'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: ManagementGroups
+  displayName: Management Groups Deploy
+  jobs: 
+  - job: whatIfManagementGroups
+    displayName: Management Groups What If
+    steps:
+      - task: AzureCLI@2
+        displayName: Management Groups ALZ What If
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            name=alz-MGDeploy$(date +%F_%H-%M-%S)
+            az deployment tenant what-if -n $name -l $(region) -f '.\alz_platform\managementGroups\managementGroups.bicep' -p '.\alz_platform\managementGroups\managementGroups.bicepparam'
+  - job: waitForValidation
+    dependsOn: whatIfManagementGroups
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:   
+    - task: ManualValidation@0
+      timeoutInMinutes: 60 # task times out in 1 hour
+      inputs:
+          # notifyUsers: |
+          #     someone@example.com
+          instructions: 'Please validate the what-if output and resume'
+          onTimeout: 'resume'
+  - deployment: ManagementGroupsDeploy
+    displayName: Deploy Management Groups
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+           - checkout: self
+           - task: AzureCLI@2
+             displayName: Deploy Management Groups
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  name=alz-MGDeploy$(date +%F_%H-%M-%S)
+                  az deployment tenant create -n $name -l $(region) -f '.\alz_platform\managementGroups\managementGroups.bicep' -p '.\alz_platform\managementGroups\managementGroups.bicepparam'
+
+- stage: RGDeploy
+  displayName: ALZ Resource Groups Deploy
+  dependsOn: SubscriptionPlacement
+  jobs: 
+  - deployment: RGDeploy
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+           - checkout: self
+           - task: AzureCLI@2
+             displayName: Deploy Logging Resource Group
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  az account set --subscription $(loggingSub)
+                  name=alz-LoggingDeploy$(date +%F_%H-%M-%S)
+                  az deployment sub create -l $(region) -n $name -f '.\alz_platform\resourceGroups\resourceGroups.bicep' -p parResourceGroupName=$(logging-rg) parLocation=$(region)
+
+           - task: AzureCLI@2
+             displayName: Deploy Hub Networking Resource Group
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  az account set --subscription $(hubNetworkingSub)
+                  name=alz-hubDeploy$(date +%F_%H-%M-%S)
+                  az deployment sub create -l $(region) -n $name -f '.\alz_platform\resourceGroups\resourceGroups.bicep' -p parResourceGroupName=$(hub-rg) parLocation=$(region)
+
+           - task: AzureCLI@2
+             displayName: Deploy Spoke Networking Resource Group 
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  az account set --subscription $(spokeNetworkingSub)
+                  name=alz-hubDeploy$(date +%F_%H-%M-%S)
+                  az deployment sub create -l $(region) -n $name -f '.\alz_platform\resourceGroups\resourceGroups.bicep' -p parResourceGroupName=$(spoke-rg) parLocation=$(region)
+
+- stage: Logging
+  displayName: Logging Deploy
+  dependsOn: PolicyAssignment
+  jobs: 
+  - job: whatIfLogging
+    displayName: Logging Deploy What If
+    steps:
+    - task: AzureCLI@2
+      displayName: Logging ALZ What If
+      inputs:
+       azureSubscription: $(azureServiceConnection)
+       scriptType: 'bash'
+       scriptLocation: 'inlineScript'
+       inlineScript: |
+        name=alz-LoggingDeploy$(date +%F_%H-%M-%S)
+        az deployment group what-if -g $(logging-rg) -f '.\alz_platform\logging\logging.bicep' 
+  - job: waitForValidation
+    dependsOn: WhatIfLogging
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:   
+    - task: ManualValidation@0
+      timeoutInMinutes: 60 # task times out in 1 hour
+      inputs:
+          # notifyUsers: |
+          #     someone@example.com
+          instructions: 'Please validate the what-if output and resume'
+          onTimeout: 'resume'
+  - deployment: LoggingDeploy
+    environment: 'Production'
+    dependsOn: waitForValidation
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+           - checkout: self
+           - task: AzureCLI@2
+             displayName: Deploy Landing Zone Logging
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  az account set --subscription $(loggingSub)
+                  name=alz-LoggingDeploy$(date +%F_%H-%M-%S)
+                  az deployment group create -g $(logging-rg) -n $name -f '.\alz_platform\logging\logging.bicep'
+
+- stage: MgDiagSettings
+  displayName: MG Diag Settings Deploy
+  dependsOn: Logging
+  jobs: 
+   - job: whatIfMGDiag
+     displayName: MG Diags What If
+     steps:
+      - task: AzureCLI@2
+        displayName: Management Group Diagnostic Settings What If
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            name=alz-MGDiagDeploy$(date +%F_%H-%M-%S) 
+            az deployment mg what-if -l $(region) -n $name -f '.\alz_platform\logging\logging.bicep' -m $(mgmtid)
+   - job: waitForValidation
+     dependsOn: WhatIfMGDiag
+     displayName: Wait for approval
+     pool: server  
+     timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+     steps:   
+      - task: ManualValidation@0
+        timeoutInMinutes: 60 # task times out in 1 hour
+        inputs:
+              # notifyUsers: |
+              #     someone@example.com
+              instructions: 'Please validate the what-if output and resume'
+              onTimeout: 'resume'
+   - deployment: MgDiagsSettingsDeploy
+     dependsOn: waitForValidation
+     environment: 'Production'
+     strategy: 
+      runOnce:
+        deploy:
+          steps:
+           - checkout: self
+           - task: AzureCLI@2
+             displayName: Deploy Management Group Diagnostic Settings
+             inputs:
+                azureSubscription: $(azureServiceConnection)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  az deployment mg create -l $(region) -f '.\alz_platform\logging\logging.bicep' -m $(mgmtid)
+
+- stage: SubscriptionPlacement
+  displayName: Subscription Placement Deploy
+  dependsOn: ManagementGroups
+  jobs: 
+  - job: whatIfSubscriptionPlacement
+    steps:
+     - task: AzureCLI@2
+       displayName: Subscription Placement What If
+       inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          name=alz-Subplacementdeploy$(date +%F_%H-%M-%S) 
+          az deployment mg what-if -l $(region) -n $name -f '.\alz_platform\subscriptionPlacement\subscriptionPlacement.bicep' -m $(mgmtid)
+  - job: waitForValidation
+    dependsOn: whatIfSubscriptionPlacement
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:
+     - task: ManualValidation@0
+       timeoutInMinutes: 60 # task times out in 1 hour
+       inputs:
+          # notifyUsers: |
+          #     someone@example.com
+          instructions: 'Please validate the what-if output and resume'
+          onTimeout: 'resume'
+  - deployment: SubscriptionPlacementDeploy
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+         deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Subscription Placements
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                name=alz-Subplacementdeploy$(date +%F_%H-%M-%S) 
+                az deployment mg create -n $name -l $(region) -f '.\alz_platform\subscriptionPlacement\subscriptionPlacement.bicep' -m $(mgmtid)
+
+- stage: HubNetworking
+  displayName: Hub Networking Deploy
+  dependsOn: RBACAssignments
+  jobs: 
+   - job: whatIfHubNetworking
+     displayName: Hub Networking What If
+     steps:
+      - task: AzureCLI@2
+        displayName: Hub Networking What If
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            name=alz-HubDeploy$(date +%F_%H-%M-%S)
+            az deployment sub what-if -l $region -n $name -f '.\alz_platform\resourceGroups\resourceGroups.bicep'
+   - job: waitForValidation
+     dependsOn: whatIfHubNetworking
+     displayName: Wait for approval
+     pool: server  
+     timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+     steps:   
+      - task: ManualValidation@0
+        timeoutInMinutes: 60 # task times out in 1 hour
+        inputs:
+          # notifyUsers: |
+          #     someone@example.com
+          instructions: 'Please validate the what-if output and resume'
+          onTimeout: 'resume'
+   - deployment: HubNetworkingDeploy
+     dependsOn: waitForValidation
+     environment: 'Production'
+     strategy: 
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Hub Networking
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az account set --subscription $(hubNetworkingSub)
+                name=alz-HubDeploy$(date +%F_%H-%M-%S)
+                az deployment group create -g $(hub-rg) -n $name -f '.\alz_platform\hubNetworking\hubNetworking.bicep'
+
+- stage: SpokeNetworking
+  displayName: Spoke Networking Deploy
+  dependsOn: HubNetworking
+  jobs: 
+  - job: whatIfSpokeNetworking
+    displayName: Spoke Networking What If
+    steps:
+     - task: AzureCLI@2
+       displayName: Spoke Networking What If
+       inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+         name=alz-spokeDeploy$(date +%F_%H-%M-%S)
+         az deployment group what-if -g $(spoke-rg) -n $name -l $(region) -f '.\alz_platform\spokeNetworking\spokeNetworking.bicep'
+         az deployment sub what-if -l $region -n $name -f '.\alz_platform\resourceGroups\resourceGroups.bicep'
+  - job: waitForValidation
+    dependsOn: whatIfSpokeNetworking
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:
+     - task: ManualValidation@0
+       timeoutInMinutes: 60 # task times out in 1 hour
+       inputs:
+          # notifyUsers: |
+          #     someone@example.com
+          instructions: 'Please validate the what-if output and resume'
+          onTimeout: 'resume'
+  - deployment: HubNetworkingDeploy
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Spoke Networking Resource Group(s)
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az account set --subscription $(spokeNetworkingSub)
+                name=alz-spokeDeploy$(date +%F_%H-%M-%S)
+                az deployment sub create -n $name -l $(region) -f '.\alz_platform\spokeNetworking\spokeNetworking.bicep'
+          - task: AzureCLI@2
+            displayName: Deploy Spoke Networking
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                name=alz-HubDeploy$(date +%F_%H-%M-%S)
+                az deployment group create -n $name -g $(spoke-rg) -f '.\alz_platform\spokeNetworking\spokeNetworking.bicep'
+
+- stage: routeTables
+  displayName: Route Tables Deploy
+  dependsOn: SpokeNetworking
+  jobs: 
+  - job: whatIfRouteTable
+    displayName: Route Table(s) What If
+    steps:
+     - task: AzureCLI@2
+       displayName: Route Tables What If
+       inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          name=alz-rtDeploy$(date +%F_%H-%M-%S)
+          az account set --subscription $(spokeNetworkingSub)
+          az deployment sub create -n $name -l $(region) -f '.\alz_platform\routeTables\routeTables.bicep'
+  - job: waitForValidation
+    dependsOn: whatIfRouteTable
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 60 # task times out in 1 hour
+      inputs:
+            # notifyUsers: |
+            #     someone@example.com
+            instructions: 'Please validate the what-if output and resume'
+            onTimeout: 'resume'
+  - deployment: RouteTableDeploy
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Route Tables
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                name=alz-rtDeploy$(date +%F_%H-%M-%S)
+                az account set --subscription $(spokeNetworkingSub)
+                az deployment sub create -n $name -l $(region) -f '.\alz_platform\routeTables\routeTables.bicep'
+
+- stage: RBACAssignments
+  displayName: RBAC Role Assignments Deployment
+  dependsOn: RGDeploy
+  jobs: 
+  - job: whatIfRBACAssignments
+    displayName: RBAC Assignment What If
+    steps:
+      - task: AzureCLI@2
+        displayName: RBAC Management Group Assignment What If
+        inputs:
+          azureSubscription: $(azureServiceConnection)
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            name=alz-rbacmgmtydeploy$(date +%F_%H-%M-%S) 
+            az deployment mg what-if -l $(region) -n $name -f '.\alz_platform\roleAssignments\roleAssignmentManagementGroup.bicep' -m $(mgmtid)
+  - job: waitForValidation
+    dependsOn: whatIfRBACAssignments
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 60 # task times out in 1 hour
+        inputs:
+          # notifyUsers: |
+          #     someone@example.com
+            instructions: 'Please validate the what-if output and resume'
+            onTimeout: 'resume'
+  - deployment: RBACAssignmentsDeploy
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Management Group RBAC Role Assignments
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                name=alz-rbacmgmtdeploy$(date +%F_%H-%M-%S) 
+                az deployment mg create -n $name -l $(region) -f '.\alz_platform\roleAssignments\roleAssignmentManagementGroup.bicep' -m $(mgmtid)
+
+- stage: PolicyAssignment
+  displayName: Azure Policy Assignment Deploy
+  dependsOn: SubscriptionPlacement
+  jobs: 
+  - job: whatIfMGPolicyAssignment
+    displayName: MG Policy Assignment What If
+    steps:
+     - task: AzureCLI@2
+       displayName: Azure Policy Management Group Assignment What If
+       inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          name=alz-azmgmtpolicydeploy$(date +%F_%H-%M-%S) 
+          az deployment mg what-if -l $(region) -n $name -f '.\alz_platform\policy\policyAssignmentManagementGroup.bicep' -m $(mgmtid)
+  - job: waitForValidation
+    dependsOn: whatIfMGPolicyAssignment
+    displayName: Wait for approval
+    pool: server  
+    timeoutInMinutes: 60 # job times out in 1 hour, allows for running completely headless
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 60 # task times out in 1 hour
+      inputs:
+            # notifyUsers: |
+            #     someone@example.com
+            instructions: 'Please validate the what-if output and resume'
+            onTimeout: 'resume'
+  - deployment: MGPolicyAssignmentDeploy
+    dependsOn: waitForValidation
+    environment: 'Production'
+    strategy: 
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: Deploy Management Group Azure Policy
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                name=alz-azmgmtpolicydeploy$(date +%F_%H-%M-%S) 
+                az deployment mg create -n $name -l $(region) -f '.\alz_platform\policy\policyAssignmentManagementGroup.bicep' -m $(mgmtid)

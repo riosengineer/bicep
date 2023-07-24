@@ -1,0 +1,71 @@
+# Bicep Pull Request Pipeline
+# Author: Dan Rios
+
+trigger: none
+
+variables:
+  vmImageName: 'ubuntu-latest'
+  azureServiceConnection: 'spn-azdo-bicep-mgmt'
+
+pool:
+  vmImage: $(vmImageName)
+
+stages: 
+- stage: BicepLinter
+  displayName: 'Bicep Linter'
+  jobs:
+    - job: BicepLinter
+      displayName: 'Bicep Linter'
+      steps:
+        - task: AzureCLI@2
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: 'pscore'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              $bicepfiles = Get-ChildItem -Path "$(System.DefaultWorkingDirectory)\*" -Recurse -Include *.bicep
+          
+              foreach ($bicepfile in $bicepfiles) {
+
+              write-host "##[section] Running Bicep Linter for $bicepfile"
+              az bicep build -f $bicepfile
+
+              }
+
+- stage:  PSRuleAnalysis
+  displayName: 'PSRule Analysis'
+  jobs:
+    - job: 'PSRuleAnalysis'
+      displayName: 'Run PSRule analysis'
+      steps:
+        - task: bewhite.ps-rule.assert.ps-rule-assert@2
+          inputs:
+            source: "$(System.DefaultWorkingDirectory)/ps-rule.yaml"
+            modules: PSRule.Rules.Azure, PSRule.Rules.CAF, PSRule.Rules.Kubernetes
+            outputFormat: NUnit3
+            outputPath: "reports/ps-rule-results.xml"
+
+- stage: MSSecDevOps
+  displayName: 'Microsoft DevOps Security Scan'
+  jobs: 
+    - job: 'MicrosoftSecurityDevOps'
+      displayName: 'Microsoft Security DevOps scan'
+      steps:
+      - task: MicrosoftSecurityDevOps@1
+        inputs:
+            categories: 'IaC, secrets'
+            
+- stage: Build
+  jobs:
+    - job: ArtifactDrop
+      displayName: "Build Bicep Artifact"
+      steps:
+      - task: ArchiveFiles@2
+        inputs:
+          includeRootFolder: true
+          replaceExistingArchive: true
+          rootFolderOrFile: $(System.DefaultWorkingDirectory)
+          archiveType: tar
+          archiveFile: "$(Build.ArtifactStagingDirectory)/$(Build.BuildId)-bicep-plan.tgz"
+      - upload: $(Build.ArtifactStagingDirectory)/$(Build.BuildId)-bicep-plan.tgz
+        artifact: $(Build.BuildId)-bicep-plan.tgz
