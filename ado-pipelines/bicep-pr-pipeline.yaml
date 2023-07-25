@@ -1,18 +1,19 @@
-# Bicep Pull Request Pipeline
+# The ultimate Bicep validation Pull Request Pipeline
 # Author: Dan Rios
+# rios.engineer
 
 trigger: none
 
 variables:
   vmImageName: 'ubuntu-latest'
-  azureServiceConnection: 'spn-azdo-bicep-mgmt'
+  azureServiceConnection: 'spn'
 
 pool:
   vmImage: $(vmImageName)
 
 stages: 
-- stage: BicepLinter
-  displayName: 'Bicep Linter'
+- stage: BicepValidation
+  displayName: 'Bicep Validation'
   jobs:
     - job: BicepLinter
       displayName: 'Bicep Linter'
@@ -31,29 +32,18 @@ stages:
               az bicep build -f $bicepfile
 
               }
-
-- stage:  PSRuleAnalysis
-  displayName: 'PSRule Analysis'
-  jobs:
-    - job: 'PSRuleAnalysis'
-      displayName: 'Run PSRule analysis'
-      steps:
-        - task: bewhite.ps-rule.assert.ps-rule-assert@2
-          inputs:
-            source: "$(System.DefaultWorkingDirectory)/ps-rule.yaml"
-            modules: PSRule.Rules.Azure, PSRule.Rules.CAF, PSRule.Rules.Kubernetes
-            outputFormat: NUnit3
-            outputPath: "reports/ps-rule-results.xml"
-
-- stage: MSSecDevOps
-  displayName: 'Microsoft DevOps Security Scan'
-  jobs: 
     - job: 'MicrosoftSecurityDevOps'
       displayName: 'Microsoft Security DevOps scan'
       steps:
       - task: MicrosoftSecurityDevOps@1
-        inputs:
-            categories: 'IaC, secrets'
+
+    - job: SuperLinter
+      displayName: Super Linter
+      steps:
+      - script: |
+          docker pull github/super-linter:latest
+          docker run -e RUN_LOCAL=true -v $(System.DefaultWorkingDirectory):/tmp/lint github/super-linter
+        displayName: 'Super Linter'
             
 - stage: Build
   jobs:
