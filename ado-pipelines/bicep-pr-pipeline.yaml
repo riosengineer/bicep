@@ -1,12 +1,10 @@
 # The ultimate Bicep validation Pull Request Pipeline
-# Author: Dan Rios
-# rios.engineer
 
 trigger: none
 
 variables:
   vmImageName: 'ubuntu-latest'
-  azureServiceConnection: 'spn'
+  azureServiceConnection: 'ConnectionNameHere'
 
 pool:
   vmImage: $(vmImageName)
