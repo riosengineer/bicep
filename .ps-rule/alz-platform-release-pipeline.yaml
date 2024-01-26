@@ -1,0 +1,89 @@
+# Nasstar Bicep ALZ Platform Release Pipeline
+trigger: none
+
+variables:
+# - group: alz
+- name: azureServiceConnection
+  value: 'Nasstar - Microsoft Consultancy (b8234a19-043e-4345-b5f0-39d645bb7f45)'
+
+pool:
+  vmImage: 'Ubuntu-Latest'
+
+stages:
+- stage: managementGroupsDeploy
+  displayName: 'Management Groups Deploy'
+  jobs:
+  - template: 'templates/alz/managementGroupsDeploy.yaml'
+
+- stage: subPlacementDeploy
+  displayName: 'Subscription Placement Deploy'
+  dependsOn: 'managementGroupsDeploy'
+  jobs:
+  - template: 'templates/alz/subPlacementDeploy.yaml'
+
+- stage: resourceGroupsDeploy
+  displayName: 'ALZ Resource Groups Deploy'
+  dependsOn: 'subPlacementDeploy'
+  jobs:
+  - template: 'templates/alz/resourceGroupsDeploy.yaml'
+
+- stage: loggingDeploy
+  displayName: 'Logging Deploy'
+  dependsOn: 'resourceGroupsDeploy'
+  jobs:
+  - template: 'templates/alz/loggingDeploy.yaml'
+
+- stage: policyDeploy
+  displayName: 'Policy Assignment Deploy'
+  dependsOn: 'loggingDeploy'
+  jobs:
+  - template: 'templates/alz/policyAssignmentsDeploy.yaml'
+
+- stage: mgDiagsDeploy
+  displayName: 'Management Groups Diag Deploy'
+  dependsOn: 'loggingDeploy'
+  jobs:
+  - template: 'templates/alz/mgDiagsDeploy.yaml'
+
+- stage: RBACDeploy
+  displayName: 'RBAC Assignment Deploy'
+  dependsOn: 'resourceGroupsDeploy'
+  jobs:
+  - template: 'templates/alz/rbacAssignmentsDeploy.yaml'
+
+- stage: routeTablesDeploy
+  displayName: 'Route Tables Deploy'
+  dependsOn: 'RBACDeploy'
+  jobs:
+  - template: 'templates/alz/routeTablesDeploy.yaml'
+
+- stage: hubNetworkingDeploy
+  displayName: 'Hub Networking Deploy'
+  dependsOn: 'routeTablesDeploy'
+  jobs:
+  - template: 'templates/alz/hubNetworkingDeploy.yaml'
+
+- stage: firewallRulesDeploy
+  displayName: 'Firewall Rules Deploy'
+  dependsOn: 'hubNetworkingDeploy'
+  jobs:
+  - template: 'templates/alz/firewallRulesDeploy.yaml'
+
+- stage: spokeNetworkingDeploy
+  displayName: 'Spoke Networking Deploy'
+  dependsOn: 'hubNetworkingDeploy'
+  jobs:
+  - template: 'templates/alz/spokeNetworkingDeploy.yaml'
+
+- stage: expressRouteDeploy
+  displayName: 'Express Route Deploy'
+  dependsOn: 'spokeNetworkingDeploy'
+  jobs:
+  - template: 'templates/alz/expressRouteDeploy.yaml'
+
+- stage: erConnectionsDeploy
+  displayName: 'ER Connections Deploy'
+  dependsOn: 'expressRouteDeploy'
+  jobs:
+  - template: 'templates/alz/erConnectionsDeploy.yaml'
+  

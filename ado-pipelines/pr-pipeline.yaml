@@ -1,0 +1,102 @@
+trigger: none
+
+variables:
+  vmImageName: ubuntu-latest
+  azureServiceConnection: Nasstar - Microsoft Consultancy (b8234a19-043e-4345-b5f0-39d645bb7f45)
+
+pool:
+  vmImage: $(vmImageName)
+
+stages:
+- stage: Validation
+  displayName: Validation ✅
+  jobs:
+  - job: MicrosoftSecurityDevOps
+    displayName: Defender Scan 🛡️
+    steps:
+    - task: MicrosoftSecurityDevOps@1
+      inputs:
+        categories: 'secrets,artifacts,containers'
+        tools: 'terrascan, trivy'
+        break: true
+
+  - job: MegaLinter
+    displayName: MegaLinter 🧮
+    steps:
+    - checkout: self
+    - script: docker pull oxsecurity/megalinter:v7
+      displayName: Pull MegaLinter
+    - script: |
+        docker run -v $(System.DefaultWorkingDirectory):/tmp/lint \
+          --env-file <(env | grep -e SYSTEM_ -e BUILD_ -e TF_ -e AGENT_) \
+          -e VALIDATE_ALL_CODEBASE=false \
+          -e DISABLE_LINTERS=REPOSITORY_CHECKOV,SPELL_CSPELL,YAML_YAMLLINT,COPYPASTE_JSCPD,ARM_ARM_TTK \
+          -e SYSTEM_ACCESSTOKEN=$(System.AccessToken) \
+          -e GIT_AUTHORIZATION_BEARER=$(System.AccessToken) \
+          -e FILTER_REGEX_EXCLUDE=pipelines/.tests/pester/.*\.ps1 \
+          oxsecurity/megalinter:v7
+      displayName: Run MegaLinter
+
+    - task: PublishPipelineArtifact@1
+      condition: succeededOrFailed()
+      displayName: Upload MegaLinter reports
+      inputs:
+        targetPath: $(System.DefaultWorkingDirectory)/megalinter-reports/
+        artifactName: MegaLinterReport
+
+  - job: 'PSRuleAnalysis'
+    displayName: PSRule analysis 🔬
+    steps:
+    - task: bewhite.ps-rule.assert.ps-rule-assert@2
+      inputs:
+        option: 'ps-rule.yaml'
+        source: ".ps-rule/"
+        modules: PSRule.Rules.Azure, PSRule.Rules.CAF, PSRule.Rules.Kubernetes
+        outputFormat: NUnit3
+        outputPath: reports/ps-rule-results.xml
+
+    - task: PublishTestResults@2
+      displayName: 'Publish PSRule results'
+      condition: always()
+      inputs:
+        testRunTitle: 'PSRule'
+        testRunner: NUnit
+        testResultsFiles: 'reports/ps-rule-results.xml'
+
+  - job: 'PesterTests'
+    displayName: 'Pester Tests 🧪'
+    steps:
+    - task: PowerShell@2
+      displayName: "Platform Pester tests"
+      inputs:
+        filePath: './pipelines/.tests/pester/bicep-module-pester.ps1'
+
+    - task: PowerShell@2
+      displayName: "Workloads Pester tests"
+      inputs:
+        filePath: './pipelines/.tests/pester/bicep-module-workloads-pester.ps1'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Pester results'
+      condition: always()
+      inputs:
+        testResultsFormat: "NUnit"
+        testResultsFiles: "**/test-Pester.xml"
+        failTaskOnFailedTests: true
+        testRunTitle: "Validate Bicep module tests file"
+
+- stage: Build
+  displayName: Build 🏗️
+  jobs:
+  - job: ArtifactDrop
+    displayName: Build Bicep Artifact 🛠️
+    steps:
+    - task: ArchiveFiles@2
+      inputs:
+        includeRootFolder: true
+        replaceExistingArchive: true
+        rootFolderOrFile: $(System.DefaultWorkingDirectory)
+        archiveType: tar
+        archiveFile: $(Build.ArtifactStagingDirectory)/$(Build.BuildId)-bicep-plan.tgz
+    - upload: $(Build.ArtifactStagingDirectory)/$(Build.BuildId)-bicep-plan.tgz
+      artifact: $(Build.BuildId)-bicep-plan.tgz
